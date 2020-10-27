@@ -86,7 +86,7 @@ get_spare_chunks_focused(struct oio_lb_s *lb, const char *pool,
 		beans = g_slist_prepend(beans, prop);
 		beans = g_slist_prepend(beans, chunk);
 	}
-	err = oio_lb__poll_pool_around(lb, pool, pin, mode, _on_id, NULL);
+	err = oio_lb__poll_pool_around(lb, pool, pin, mode, _on_id, NULL, NULL);
 	if (err) {
 		g_prefix_error(&err,
 				"found only %u services matching the criteria (pool=%s): ",
@@ -158,7 +158,7 @@ get_conditioned_spare_chunks(struct oio_lb_s *lb, const char *pool,
 		beans = g_slist_prepend(beans, prop);
 		beans = g_slist_prepend(beans, chunk);
 	}
-	err = oio_lb__patch_with_pool(lb, pool, avoid, known, _on_id, NULL);
+	err = oio_lb__patch_with_pool(lb, pool, avoid, known, _on_id, NULL, NULL);
 	guint chunks_count = g_slist_length(beans) / 2;
 	if (err) {
 		g_prefix_error(&err,
@@ -349,7 +349,7 @@ _m2_generate_chunks(struct gen_ctx_s *ctx,
 		// FIXME(FVE): set last argument
 
 		err = oio_lb__poll_pool_around(ctx->lb, pool,
-				ctx->pin, ctx->mode, _on_id, NULL);
+				ctx->pin, ctx->mode, _on_id, NULL, NULL);
 
 		if (err != NULL) {
 			g_prefix_error(&err, "at position %u: did not find enough "

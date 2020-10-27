@@ -47,12 +47,14 @@ struct oio_lb_pool_vtable_s
 
 	GError* (*poll) (struct oio_lb_pool_s *self,
 			const oio_location_t * avoids,
-			oio_lb_on_id_f on_id, gboolean *flawed);
+			oio_lb_on_id_f on_id, gpointer u,
+			gboolean *flawed);
 
 	GError* (*patch) (struct oio_lb_pool_s *self,
 			const oio_location_t * avoids,
 			const oio_location_t * known,
-			oio_lb_on_id_f on_id, gboolean *flawed);
+			oio_lb_on_id_f on_id, gpointer u,
+			gboolean *flawed);
 
 	struct oio_lb_item_s* (*get_item) (struct oio_lb_pool_s *self,
 			const char *id);
@@ -87,18 +89,20 @@ oio_lb_pool__destroy (struct oio_lb_pool_s *self)
 GError*
 oio_lb_pool__poll (struct oio_lb_pool_s *self,
 		const oio_location_t * avoids,
-		oio_lb_on_id_f on_id, gboolean *flawed)
+		oio_lb_on_id_f on_id, gpointer u,
+		gboolean *flawed)
 {
-	CFG_CALL(self,poll)(self, avoids, on_id, flawed);
+	CFG_CALL(self,poll)(self, avoids, on_id, u, flawed);
 }
 
 GError*
 oio_lb_pool__patch(struct oio_lb_pool_s *self,
 		const oio_location_t * avoids,
 		const oio_location_t * known,
-		oio_lb_on_id_f on_id, gboolean *flawed)
+		oio_lb_on_id_f on_id, gpointer u,
+		gboolean *flawed)
 {
-	CFG_CALL(self, patch)(self, avoids, known, on_id, flawed);
+	CFG_CALL(self, patch)(self, avoids, known, on_id, u, flawed);
 }
 
 struct oio_lb_item_s *
@@ -389,12 +393,14 @@ static void _local__destroy (struct oio_lb_pool_s *self);
 
 static GError *_local__poll (struct oio_lb_pool_s *self,
 		const oio_location_t * avoids,
-		oio_lb_on_id_f on_id, gboolean *flawed);
+		oio_lb_on_id_f on_id, gpointer u,
+		gboolean *flawed);
 
 static GError *_local__patch(struct oio_lb_pool_s *self,
 		const oio_location_t * avoids,
 		const oio_location_t * known,
-		oio_lb_on_id_f on_id, gboolean *flawed);
+		oio_lb_on_id_f on_id, gpointer u,
+		gboolean *flawed);
 
 static struct oio_lb_item_s *_local__get_item(struct oio_lb_pool_s *self,
 		const char *id);
@@ -507,16 +513,18 @@ djb_hash_buf(const guint8 * b, register gsize bs)
 	return h;
 }
 
+static void
+_count(GQuark key_id UNUSED, gpointer data UNUSED, gpointer udata)
+{
+	*((guint*)udata) += 1;
+}
+
 /** Gets the number of elements in a GData. */
 static guint
 oio_ext_gdatalist_length(GData **datalist)
 {
 	guint counter = 0;
-	void _datalist_count(GQuark key_id UNUSED,
-			gpointer data UNUSED, gpointer udata UNUSED) {
-		counter++;
-	}
-	g_datalist_foreach(datalist, _datalist_count, NULL);
+	g_datalist_foreach(datalist, _count, &counter);
 	return counter;
 }
 
@@ -725,6 +733,18 @@ _level_datalist_incr_loc(GData **counters, oio_location_t loc)
 	}
 }
 
+# ifdef HAVE_EXTRA_DEBUG
+static void
+_display(GQuark k, gpointer data, gpointer u)
+{
+	const guint level = GPOINTER_TO_UINT(u);
+	oio_location_t loc = (GPOINTER_TO_UINT(k) - 1);
+	GRID_TRACE("%0*lX prefix has %u services",
+			4 * (OIO_LB_LOC_LEVELS - level),
+			loc, GPOINTER_TO_UINT(data));
+}
+#endif
+
 static void
 _slot_rehash (struct oio_lb_slot_s *slot)
 {
@@ -748,13 +768,6 @@ _slot_rehash (struct oio_lb_slot_s *slot)
 
 # ifdef HAVE_EXTRA_DEBUG
 		if (unlikely(GRID_TRACE_ENABLED())) {
-			void _display(GQuark k, gpointer data, gpointer u) {
-				guint level = GPOINTER_TO_UINT(u);
-				oio_location_t loc = (GPOINTER_TO_UINT(k) - 1);
-				GRID_TRACE("%0*lX prefix has %u services",
-						4 * (OIO_LB_LOC_LEVELS - level),
-						loc, GPOINTER_TO_UINT(data));
-			}
 			for (int i = 1; i < OIO_LB_LOC_LEVELS; i++)
 				g_datalist_foreach(
 						&slot->items_by_loc[i], _display, GUINT_TO_POINTER(i));
@@ -990,10 +1003,10 @@ _local_target__poll(struct oio_lb_pool_LOCAL_s *lb,
 static GError*
 _local__poll (struct oio_lb_pool_s *self,
 		const oio_location_t * avoids,
-		oio_lb_on_id_f on_id,
+		oio_lb_on_id_f on_id, gpointer u,
 		gboolean *flawed)
 {
-	return _local__patch(self, avoids, NULL, on_id, flawed);
+	return _local__patch(self, avoids, NULL, on_id, u, flawed);
 }
 
 static struct oio_lb_selected_item_s*
@@ -1100,38 +1113,69 @@ _match_item_with_targets(struct oio_lb_pool_LOCAL_s *lb,
 	return FALSE;
 }
 
+// FIXME: there is similar code in _slot_rehash()
+static void
+_debug_service_selection_hook_display(GQuark k, gpointer data, gpointer u)
+{
+	const guint level = GPOINTER_TO_UINT(u);
+	oio_location_t loc = (GPOINTER_TO_UINT(k) - 1);
+	GRID_DEBUG("%0*" G_GINT64_MODIFIER "X selected %u times",
+			4 * (OIO_LB_LOC_LEVELS - level),
+			loc, GPOINTER_TO_UINT(data));
+}
+
+struct _display_selected_ctx_s {
+	const oio_location_t *polled;
+	guint index;
+};
+
+static void
+_display_selected(gpointer element, gpointer udata)
+{
+	struct _display_selected_ctx_s *ctx = udata;
+	struct oio_lb_selected_item_s *sel = element;
+	GRID_DEBUG("Selected %s at loc %016"G_GINT64_MODIFIER
+			"X, dist: %u/%u/%u, slot: %s/%s",
+			sel->item? sel->item->id : "known service",
+			sel->item? sel->item->location : ctx->polled[ctx->index],
+			sel->final_dist, sel->warn_dist, sel->expected_dist,
+			sel->final_slot, sel->expected_slot);
+	ctx->index ++;
+}
+
 static void
 _debug_service_selection(struct polling_ctx_s *ctx)
 {
-	// FIXME: there is similar code in _slot_rehash()
-	void _display(GQuark k, gpointer data, gpointer u) {
-		guint level = GPOINTER_TO_UINT(u);
-		oio_location_t loc = (GPOINTER_TO_UINT(k) - 1);
-		GRID_DEBUG("%0*" G_GINT64_MODIFIER "X selected %u times",
-				4 * (OIO_LB_LOC_LEVELS - level),
-				loc, GPOINTER_TO_UINT(data));
-	}
-	for (int level = 1; level < OIO_LB_LOC_LEVELS; level++)
+	for (int level = 1; level < OIO_LB_LOC_LEVELS; level++) {
 		g_datalist_foreach(&(ctx->counters[level]),
-				_display, GUINT_TO_POINTER(level));
-	guint i = 0;
-	void _display_selected(gpointer element, gpointer udata UNUSED) {
-		struct oio_lb_selected_item_s *sel = element;
-		GRID_DEBUG("Selected %s at loc %016"G_GINT64_MODIFIER
-				"X, dist: %u/%u/%u, slot: %s/%s",
-				sel->item? sel->item->id : "known service",
-				sel->item? sel->item->location : ctx->polled[i],
-				sel->final_dist, sel->warn_dist, sel->expected_dist,
-				sel->final_slot, sel->expected_slot);
-		i++;
+				_debug_service_selection_hook_display,
+				GUINT_TO_POINTER(level));
 	}
-	g_ptr_array_foreach(ctx->selection, _display_selected, NULL);
+
+	struct _display_selected_ctx_s ctx0 = {
+		.polled = ctx->polled, .index = 0};
+	g_ptr_array_foreach(ctx->selection, _display_selected, &ctx0);
+}
+
+struct _forward__ctx_s {
+	oio_lb_on_id_f on_id;
+	gpointer u;
+};
+
+static void
+_forward(struct oio_lb_selected_item_s *sel, gpointer u)
+{
+	struct _forward__ctx_s *ctx = u;
+	if (sel->item)
+		ctx->on_id(sel, ctx->u);
+	// Do not forward "known" items (sel->item == NULL)
 }
 
 static GError*
 _local__patch(struct oio_lb_pool_s *self,
 		const oio_location_t *avoids, const oio_location_t *known,
-		oio_lb_on_id_f on_id, gboolean *flawed)
+		oio_lb_on_id_f on_id, gpointer u,
+		gboolean *flawed)
 {
 	struct oio_lb_pool_LOCAL_s *lb = (struct oio_lb_pool_LOCAL_s *) self;
 	EXTRA_ASSERT(lb != NULL);
@@ -1260,13 +1304,9 @@ _local__patch(struct oio_lb_pool_s *self,
 					(!lb->nearby_mode && reached_dist <= lb->warn_dist) ||
 					ctx.fallback_used;
 		}
-		void _forward(struct oio_lb_selected_item_s *sel, gpointer u UNUSED) {
-			if (sel->item)
-				on_id(sel, NULL);
-			// Do not forward "known" items (sel->item == NULL)
-		}
 		// FIXME(FVE): change signature, specify last parameter
-		g_ptr_array_foreach(ctx.selection, (GFunc)_forward, NULL);
+		struct _forward__ctx_s fctx = { .on_id = on_id, .u = u};
+		g_ptr_array_foreach(ctx.selection, (GFunc)_forward, &fctx);
 	}
 	g_ptr_array_free(ctx.selection, TRUE);
 	return err;
@@ -1799,17 +1839,29 @@ oio_lb_world__feed_slot_with_list(struct oio_lb_world_s *self,
 	g_rw_lock_writer_unlock(&self->lock);
 }
 
+typedef void (*on_item_f)(const char *id, const char *addr, void *user_data);
+
+struct _iterator_ctx_s {
+	on_item_f hook;
+	gpointer data;
+};
+
+static gboolean
+_on_id(gpointer _key UNUSED, gpointer _item, gpointer data)
+{
+	struct _iterator_ctx_s *ctx = data;
+	struct _lb_item_s *item = _item;
+	(*ctx->hook)(item->id, item->addr, ctx->data);
+	return FALSE;
+}
+
 void
 oio_lb_world__foreach(struct oio_lb_world_s *self, void *udata,
 		void (*on_item)(const char *id, const char *addr, void *user_data))
 {
-	gboolean _on_id(gpointer _key UNUSED, gpointer _item, gpointer data) {
-		struct _lb_item_s *item = _item;
-		(*on_item)(item->id, item->addr, data);
-		return FALSE;
-	}
+	struct _iterator_ctx_s ctx = {.hook = on_item, .data = udata};
 	g_rw_lock_writer_lock(&self->lock);
-	g_tree_foreach(self->items, (GTraverseFunc) _on_id, udata);
+	g_tree_foreach(self->items, (GTraverseFunc) _on_id, &ctx);
 	g_rw_lock_writer_unlock(&self->lock);
 }
 
@@ -1828,15 +1880,17 @@ _slot_debug (struct oio_lb_slot_s *slot)
 	}
 }
 
+static gboolean
+_on_slot (gchar *name UNUSED, struct oio_lb_slot_s *slot, gpointer i UNUSED)
+{
+	_slot_debug (slot);
+	return FALSE;
+}
+
 void
 oio_lb_world__debug (struct oio_lb_world_s *self)
 {
 	EXTRA_ASSERT (self != NULL);
-	gboolean _on_slot (gchar *name UNUSED, struct oio_lb_slot_s *slot,
-			void *i UNUSED) {
-		_slot_debug (slot);
-		return FALSE;
-	}
 	g_rw_lock_reader_lock(&self->lock);
 	g_tree_foreach (self->slots, (GTraverseFunc)_on_slot, NULL);
 	g_rw_lock_reader_unlock(&self->lock);
@@ -1855,68 +1909,86 @@ absolute_delta(register const guint32 u0, register const guint32 u1)
 	return MIN((u1-u0),(u0-u1));
 }
 
+static gboolean
+_on_slot_rehash(gpointer k UNUSED, struct oio_lb_slot_s *slot, gpointer w UNUSED)
+{
+	if (_slot_needs_rehash(slot))
+		_slot_rehash(slot);
+	return FALSE;
+}
+
 static void
 _world_rehash_slots(struct oio_lb_world_s *self)
 {
-	gboolean _on_slot_rehash(gpointer k UNUSED,
-			struct oio_lb_slot_s *slot, gpointer w UNUSED) {
-		if (_slot_needs_rehash(slot))
-			_slot_rehash(slot);
-		return FALSE;
-	}
 	WRITER_LOCK_DO(&self->lock,
-			g_tree_foreach(self->slots, (GTraverseFunc)_on_slot_rehash, self));
+			g_tree_foreach(self->slots, (GTraverseFunc)_on_slot_rehash, NULL));
+}
+
+struct _purge_ctx_s {
+	struct oio_lb_world_s *world;
+	guint32 age;
+};
+
+static gboolean
+_on_slot_purge_inside(gpointer k UNUSED, struct oio_lb_slot_s *slot, gpointer u)
+{
+	struct _purge_ctx_s *ctx = u;
+
+	guint pre = slot->items->len;
+	for (guint i=0; i<slot->items->len ;++i) {
+		struct _slot_item_s *si = &SLOT_ITEM(slot, i);
+		if (absolute_delta(si->generation, ctx->world->generation) > ctx->age) {
+			EXTRA_ASSERT(si->item->refcount > 0);
+			-- si->item->refcount;
+			g_array_remove_index_fast(slot->items, i);
+			-- i;
+		}
+	}
+
+	if (pre != slot->items->len) {
+		GRID_DEBUG("%u services removed from %s (%u remain)",
+				pre - slot->items->len, slot->name, slot->items->len);
+		slot->flag_dirty_weights = 1;
+		slot->flag_dirty_order = 1;
+	}
+
+	if (_slot_needs_rehash(slot))
+		_slot_rehash(slot);
+
+	return FALSE;
 }
 
 static void
 _world_purge_slot_items(struct oio_lb_world_s *self, guint32 age)
 {
-	gboolean _on_slot_purge_inside(gpointer k UNUSED,
-			struct oio_lb_slot_s *slot, struct oio_lb_world_s *world) {
-
-		guint pre = slot->items->len;
-		for (guint i=0; i<slot->items->len ;++i) {
-			struct _slot_item_s *si = &SLOT_ITEM(slot, i);
-			if (absolute_delta(si->generation, world->generation) > age) {
-				EXTRA_ASSERT(si->item->refcount > 0);
-				-- si->item->refcount;
-				g_array_remove_index_fast(slot->items, i);
-				-- i;
-			}
-		}
-
-		if (pre != slot->items->len) {
-			GRID_DEBUG("%u services removed from %s (%u remain)",
-					pre - slot->items->len, slot->name, slot->items->len);
-			slot->flag_dirty_weights = 1;
-			slot->flag_dirty_order = 1;
-		}
-
-		if (_slot_needs_rehash(slot))
-			_slot_rehash(slot);
-
-		return FALSE;
-	}
-
-
+	struct _purge_ctx_s ctx = {.world = self, .age = age};
 	WRITER_LOCK_DO(&self->lock, g_tree_foreach(self->slots,
-			(GTraverseFunc)_on_slot_purge_inside, self));
+			(GTraverseFunc)_on_slot_purge_inside, &ctx));
+}
+
+struct _extraction_context_s {
+	GSList *slots;
+	struct oio_lb_world_s *self;
+	guint32 age;
+};
+
+static gboolean
+_on_slot_extract(gpointer k UNUSED, struct oio_lb_slot_s *slot, gpointer i)
+{
+	struct _extraction_context_s *ctx = i;
+	if (absolute_delta(slot->generation, ctx->self->generation) > ctx->age)
+		ctx->slots = g_slist_prepend(ctx->slots, slot);
+	return FALSE;
 }
 
 static void
 _world_purge_slots(struct oio_lb_world_s *self, guint32 age)
 {
 	GSList *slots = NULL;
-
-	gboolean _on_slot_extract(gpointer k UNUSED, struct oio_lb_slot_s *slot,
-			gpointer i UNUSED) {
-		if (absolute_delta(slot->generation, self->generation) > age)
-			slots = g_slist_prepend(slots, slot);
-		return FALSE;
-	}
+	struct _extraction_context_s ctx = {.slots = slots, .self = self, .age = age};
 
 	g_rw_lock_writer_lock(&self->lock);
-	g_tree_foreach(self->slots, (GTraverseFunc)_on_slot_extract, &slots);
+	g_tree_foreach(self->slots, (GTraverseFunc)_on_slot_extract, &ctx);
 	for (GSList *l=slots; l ;l=l->next) {
 		struct oio_lb_slot_s *slot = l->data;
 		_slot_flush(slot);
@@ -1997,7 +2069,8 @@ oio_lb__has_pool(struct oio_lb_s *lb, const char *name)
 
 GError*
 oio_lb__poll_pool(struct oio_lb_s *lb, const char *name,
-		const oio_location_t * avoids, oio_lb_on_id_f on_id,
+		const oio_location_t * avoids,
+		oio_lb_on_id_f on_id, gpointer u,
 		gboolean *flawed)
 {
 	EXTRA_ASSERT(lb != NULL);
@@ -2006,7 +2079,7 @@ oio_lb__poll_pool(struct oio_lb_s *lb, const char *name,
 	g_rw_lock_reader_lock(&lb->lock);
 	struct oio_lb_pool_s *pool = g_hash_table_lookup(lb->pools, name);
 	if (pool)
-		res = oio_lb_pool__poll(pool, avoids, on_id, flawed);
+		res = oio_lb_pool__poll(pool, avoids, on_id, u, flawed);
 	else
 		res = BADREQ("pool [%s] not found", name);
 	g_rw_lock_reader_unlock(&lb->lock);
@@ -2016,14 +2089,15 @@ oio_lb__poll_pool(struct oio_lb_s *lb, const char *name,
 GError*
 oio_lb__patch_with_pool(struct oio_lb_s *lb, const char *name,
 		const oio_location_t *avoids, const oio_location_t *known,
-		oio_lb_on_id_f on_id, gboolean *flawed)
+		oio_lb_on_id_f on_id, gpointer u,
+		gboolean *flawed)
 {
 	EXTRA_ASSERT(name != NULL);
 	GError *res = NULL;
 	g_rw_lock_reader_lock(&lb->lock);
 	struct oio_lb_pool_s *pool = g_hash_table_lookup(lb->pools, name);
 	if (pool)
-		res = oio_lb_pool__patch(pool, avoids, known, on_id, flawed);
+		res = oio_lb_pool__patch(pool, avoids, known, on_id, u, flawed);
 	else
 		res = BADREQ("pool [%s] not found", name);
 	g_rw_lock_reader_unlock(&lb->lock);
@@ -2044,6 +2118,13 @@ oio_lb__get_item_from_pool(struct oio_lb_s *lb, const char *name,
 	return res;
 }
 
+static gboolean
+_add_key (gpointer *k, gpointer v UNUSED, GPtrArray *out)
+{
+	g_ptr_array_add(out, k);
+	return FALSE;
+}
+
 static gchar **
 _unique_slotnames(gchar **targets)
 {
@@ -2054,15 +2135,18 @@ _unique_slotnames(gchar **targets)
 		}
 	}
 
-	gboolean _add_key (gpointer *k, gpointer v UNUSED, GPtrArray *out) {
-		g_ptr_array_add(out, k);
-		return FALSE;
-	}
 	GPtrArray *out = g_ptr_array_sized_new(g_tree_nnodes(t) + 1);
 	g_tree_foreach(t, (GTraverseFunc)_add_key, out);
 	g_tree_destroy(t);
 	g_ptr_array_add(out, NULL);
 	return (gchar**) g_ptr_array_free(out, FALSE);
+}
+
+static gboolean
+_add_val (gpointer *k UNUSED, gpointer v, GPtrArray *out)
+{
+	g_ptr_array_add(out, v);
+	return FALSE;
 }
 
 static GPtrArray *
@@ -2109,20 +2193,26 @@ _unique_services(struct oio_lb_pool_LOCAL_s *lb, gchar **slots, oio_location_t p
 		}
 	}
 
-	gboolean _add_val (gpointer *k UNUSED, gpointer v, GPtrArray *out) {
-		g_ptr_array_add(out, v);
-		return FALSE;
-	}
 	GPtrArray *out = g_ptr_array_sized_new(g_tree_nnodes(t));
 	g_tree_foreach(t, (GTraverseFunc)_add_val, out);
 	g_tree_destroy(t);
 	return out;
 }
 
+static void
+_select(struct oio_lb_selected_item_s *sel, gpointer u)
+{
+	GPtrArray *selection = u;
+	if (sel->item) {
+		g_ptr_array_add(selection, _item_dup(sel));
+	}
+}
+
 static GError*
 _local__poll_around(struct oio_lb_pool_s *self,
 		const oio_location_t pin, int mode,
-		oio_lb_on_id_f on_id, gboolean *flawed)
+		oio_lb_on_id_f on_id, gpointer u,
+		gboolean *flawed)
 {
 	struct oio_lb_pool_LOCAL_s *lb = (struct oio_lb_pool_LOCAL_s *) self;
 	EXTRA_ASSERT(lb != NULL);
@@ -2208,18 +2298,13 @@ _local__poll_around(struct oio_lb_pool_s *self,
 	// Eventually complete with traditionnally polled services
 	GError *err = NULL;
 	if (selection->len < count_targets) {
-		void _select(struct oio_lb_selected_item_s *sel, gpointer u UNUSED) {
-			if (sel->item) {
-				g_ptr_array_add(selection, _item_dup(sel));
-			}
-		}
 		oio_location_t known[selection->len + 1];
 		for (guint i=0; i < selection->len ;++i) {
 			struct oio_lb_selected_item_s *sel = selection->pdata[i];
 			known[i] = sel->item->location;
 		}
 		known[selection->len] = 0;
-		err = _local__patch(self, NULL, known, _select, flawed);
+		err = _local__patch(self, NULL, known, _select, selection, flawed);
 	}
 
 	if (flawed && nb_locals > 0)
@@ -2227,7 +2312,7 @@ _local__poll_around(struct oio_lb_pool_s *self,
 
 	// If no error occured, we can upstream the polled services
 	for (guint i=0; !err && i < selection->len; ++i)
-		on_id(selection->pdata[i], NULL);
+		on_id(selection->pdata[i], u);
 
 	g_ptr_array_free(selection, TRUE);
 	g_ptr_array_free(suspects, TRUE);
@@ -2237,10 +2322,11 @@ _local__poll_around(struct oio_lb_pool_s *self,
 GError*
 oio_lb__poll_pool_around(struct oio_lb_s *lb, const char *name,
 		const oio_location_t pin, int mode,
-		oio_lb_on_id_f on_id, gboolean *flawed)
+		oio_lb_on_id_f on_id, gpointer u,
+		gboolean *flawed)
 {
 	if (!pin || !mode)
-		return oio_lb__poll_pool(lb, name, NULL, on_id, NULL);
+		return oio_lb__poll_pool(lb, name, NULL, on_id, u, NULL);
 
 	EXTRA_ASSERT(lb != NULL);
 	EXTRA_ASSERT(oio_str_is_set(name));
@@ -2251,7 +2337,7 @@ oio_lb__poll_pool_around(struct oio_lb_s *lb, const char *name,
 	g_rw_lock_reader_lock(&lb->lock);
 	struct oio_lb_pool_s *pool = g_hash_table_lookup(lb->pools, name);
 	if (pool)
-		res = _local__poll_around(pool, pin, mode, on_id, flawed);
+		res = _local__poll_around(pool, pin, mode, on_id, u, flawed);
 	else
 		res = BADREQ("pool [%s] not found", name);
 	g_rw_lock_reader_unlock(&lb->lock);

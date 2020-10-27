@@ -88,7 +88,7 @@ _lb(struct req_args_s *args, const char *srvtype)
 		g_ptr_array_add(ids, g_strdup(sel->item->id));
 	}
 	gboolean flawed = FALSE;
-	GError *err = oio_lb_pool__poll(pool, NULL, _on_id, &flawed);
+	GError *err = oio_lb_pool__poll(pool, NULL, _on_id, NULL, &flawed);
 	if (err) {
 		g_prefix_error(&err,
 				"found only %u services matching the criteria: ", ids->len);
@@ -218,7 +218,7 @@ _poll(struct req_args_s *args, struct json_object *body)
 		g_ptr_array_add(ids, g_strdup(sel->item->id));
 	}
 	gboolean flawed = FALSE;
-	err = oio_lb__patch_with_pool(lb, pool, avoid, known, _on_id, &flawed);
+	err = oio_lb__patch_with_pool(lb, pool, avoid, known, _on_id, NULL, &flawed);
 	if (err) {
 		g_prefix_error(&err,
 				"found only %u services matching the criteria: ", ids->len);

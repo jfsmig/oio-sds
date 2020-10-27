@@ -73,7 +73,7 @@ test_local_poll (void)
 					sel->item->id, sel->item->location);
 			++count;
 		}
-		GError *err = oio_lb_pool__poll(pool, NULL, _on_item, NULL);
+		GError *err = oio_lb_pool__poll(pool, NULL, _on_item, NULL, NULL);
 		g_assert_no_error(err);
 		g_assert_cmpuint(count, ==, 2);
 	}
@@ -118,7 +118,7 @@ test_local_poll_same_low_bits(void)
 					sel->item->id, sel->item->location);
 			++ count;
 		}
-		GError *err = oio_lb_pool__poll(pool, NULL, _on_item, NULL);
+		GError *err = oio_lb_pool__poll(pool, NULL, _on_item, NULL, NULL);
 		g_assert_no_error(err);
 		g_assert_cmpuint(count, ==, 3);
 	}
@@ -196,7 +196,7 @@ _test_uniform_repartition(int services, int slots, int targets)
 			++count;
 			counts[atoi(sel->item->id+3)]++;
 		}
-		GError *err = oio_lb_pool__poll(pool, NULL, _on_item, NULL);
+		GError *err = oio_lb_pool__poll(pool, NULL, _on_item, NULL, NULL);
 		g_assert_no_error(err);
 		g_assert_cmpuint(count, ==, targets);
 	}

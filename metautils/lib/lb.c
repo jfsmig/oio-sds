@@ -320,7 +320,7 @@ oio_lb_pool__poll_many(struct oio_lb_pool_s *pool, int shots,
 			g_hash_table_replace(services,
 					g_strdup(sel->item->id), GINT_TO_POINTER(icount));
 		}
-		GError *err = oio_lb_pool__poll(pool, NULL, _on_item, NULL);
+		GError *err = oio_lb_pool__poll(pool, NULL, _on_item, NULL, NULL);
 		g_assert_no_error(err);
 
 		guint32 min[4] = {G_MAXUINT32, G_MAXUINT32, G_MAXUINT32, G_MAXUINT32};

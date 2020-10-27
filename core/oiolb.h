@@ -76,13 +76,15 @@ void oio_lb_pool__destroy (struct oio_lb_pool_s *self);
  * some of the criteria of the pool could not be satisfied. */
 GError *oio_lb_pool__poll(struct oio_lb_pool_s *self,
 		const oio_location_t *avoids,
-		oio_lb_on_id_f on_id, gboolean *flawed);
+		oio_lb_on_id_f on_id, gpointer u,
+		gboolean *flawed);
 
 /* Like oio_lb_pool__poll(), but provide an array of known locations. */
 GError *oio_lb_pool__patch(struct oio_lb_pool_s *self,
 		const oio_location_t *avoids,
 		const oio_location_t *known,
-		oio_lb_on_id_f on_id, gboolean *flawed);
+		oio_lb_on_id_f on_id, gpointer u,
+		gboolean *flawed);
 
 /* Get an item from its ID. Returns NULL if the ID is isn't known.
  * The result must be freed with g_free(). */
@@ -202,19 +204,23 @@ void oio_lb__delete_pool(struct oio_lb_s *lb, const char *name);
 
 /** Calls oio_lb_pool__poll() on the pool `name`. Thread-safe. */
 GError *oio_lb__poll_pool(struct oio_lb_s *lb, const char *name,
-		const oio_location_t * avoids, oio_lb_on_id_f on_id, gboolean *flawed);
+		const oio_location_t * avoids,
+		oio_lb_on_id_f on_id, gpointer u,
+		gboolean *flawed);
 
 /** Calls oio_lb_pool__poll() on the pool `name`. Focus on the
  * provided location.
  * Thread-safe. */
 GError *oio_lb__poll_pool_around(struct oio_lb_s *lb, const char *name,
 		const oio_location_t pin, int mode,
-		oio_lb_on_id_f on_id, gboolean *flawed);
+		oio_lb_on_id_f on_id, gpointer u,
+		gboolean *flawed);
 
 /** Calls oio_lb_pool__patch() on the pool `name`. Thread-safe. */
 GError *oio_lb__patch_with_pool(struct oio_lb_s *lb, const char *name,
 		const oio_location_t *avoids, const oio_location_t *known,
-		oio_lb_on_id_f on_id, gboolean *flawed);
+		oio_lb_on_id_f on_id, gpointer u,
+		gboolean *flawed);
 
 /** Get an item from a pool. Returns NULL if ID isn't known.
  *  The result must be freed with g_free(). */
