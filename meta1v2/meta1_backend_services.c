@@ -512,6 +512,13 @@ __locations_from_m1srvurl(struct meta1_backend_s *m1,
 	return (oio_location_t*)g_array_free(out, FALSE);
 }
 
+static void
+_poll__on_id(struct oio_lb_selected_item_s *sel, gpointer u)
+{
+	GPtrArray *ids = u;
+	g_ptr_array_add(ids, g_strdup(sel->item->id));
+}
+
 static struct meta1_service_url_s *
 __poll_services(struct meta1_backend_s *m1, guint replicas,
 		const char *srvtype, guint seq,
@@ -523,12 +530,8 @@ __poll_services(struct meta1_backend_s *m1, guint replicas,
 	GPtrArray *ids = g_ptr_array_new_with_free_func(g_free);
 	/* `used` is a list of known services that we must replace, thus avoid. */
 	oio_location_t *avoid = __locations_from_m1srvurl(m1, used);
-	void _on_id(struct oio_lb_selected_item_s *sel, gpointer u UNUSED)
-	{
-		g_ptr_array_add(ids, g_strdup(sel->item->id));
-	}
 	*err = oio_lb__patch_with_pool(
-			m1->lb, srvtype, avoid, NULL, _on_id, NULL, NULL);
+			m1->lb, srvtype, avoid, NULL, _poll__on_id, ids, NULL);
 	if (*err) {
 		g_prefix_error(err, "found only %u services matching the criteria: ",
 				ids->len);
