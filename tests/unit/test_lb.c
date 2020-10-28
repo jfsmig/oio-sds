@@ -37,6 +37,16 @@ _srv(int i, struct oio_lb_item_s *srv)
 }
 
 static void
+_on_item(struct oio_lb_selected_item_s *sel, gpointer u)
+{
+	guint *count = u;
+	(void) sel;
+	GRID_TRACE("Polled %s/%"OIO_LOC_FORMAT,
+			sel->item->id, sel->item->location);
+	*count += 1;
+}
+
+static void
 test_local_poll (void)
 {
 	struct oio_lb_world_s *world = oio_lb_local__create_world ();
@@ -67,13 +77,7 @@ test_local_poll (void)
 	/* now poll some pools */
 	for (int i = 0; i < 4096; i++) {
 		guint count = 0;
-		void _on_item(struct oio_lb_selected_item_s *sel, gpointer u UNUSED) {
-			(void) sel;
-			GRID_TRACE("Polled %s/%"OIO_LOC_FORMAT,
-					sel->item->id, sel->item->location);
-			++count;
-		}
-		GError *err = oio_lb_pool__poll(pool, NULL, _on_item, NULL, NULL);
+		GError *err = oio_lb_pool__poll(pool, NULL, _on_item, &count, NULL);
 		g_assert_no_error(err);
 		g_assert_cmpuint(count, ==, 2);
 	}
@@ -82,6 +86,21 @@ test_local_poll (void)
 
 	oio_lb_pool__destroy (pool);
 	oio_lb_world__destroy (world);
+}
+
+struct _count_by_bucket_s {
+	guint count;
+	int *counts;
+};
+
+static void
+_count_by_bucket__on_item(struct oio_lb_selected_item_s *sel, gpointer u)
+{
+	struct _count_by_bucket_s *ctx = u;
+	GRID_TRACE("Polled %s/%"OIO_LOC_FORMAT,
+			sel->item->id, sel->item->location);
+	ctx->count++;
+	ctx->counts[atoi(sel->item->id+3)]++;
 }
 
 static void
@@ -112,13 +131,7 @@ test_local_poll_same_low_bits(void)
 	/* now poll some pools */
 	for (int i = 0; i < 4096; i++) {
 		guint count = 0;
-		void _on_item(struct oio_lb_selected_item_s *sel, gpointer u UNUSED) {
-			(void) sel;
-			GRID_TRACE("Polled %s/%"OIO_LOC_FORMAT,
-					sel->item->id, sel->item->location);
-			++ count;
-		}
-		GError *err = oio_lb_pool__poll(pool, NULL, _on_item, NULL, NULL);
+		GError *err = oio_lb_pool__poll(pool, NULL, _on_item, &count, NULL);
 		g_assert_no_error(err);
 		g_assert_cmpuint(count, ==, 3);
 	}
@@ -189,16 +202,10 @@ _test_uniform_repartition(int services, int slots, int targets)
 	memset(counts, 0, services * sizeof(int));
 	/* now poll some pools */
 	for (int i = 0; i < shots; i++) {
-		guint count = 0;
-		void _on_item(struct oio_lb_selected_item_s *sel, gpointer u UNUSED) {
-			GRID_TRACE("Polled %s/%"OIO_LOC_FORMAT,
-					sel->item->id, sel->item->location);
-			++count;
-			counts[atoi(sel->item->id+3)]++;
-		}
-		GError *err = oio_lb_pool__poll(pool, NULL, _on_item, NULL, NULL);
+		struct _count_by_bucket_s ctx = {.count = 0, .counts = counts};
+		GError *err = oio_lb_pool__poll(pool, NULL, _count_by_bucket__on_item, &ctx, NULL);
 		g_assert_no_error(err);
-		g_assert_cmpuint(count, ==, targets);
+		g_assert_cmpuint(ctx.count, ==, targets);
 	}
 
 	oio_lb_world__debug(world);
