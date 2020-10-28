@@ -38,6 +38,20 @@ static struct oio_lb_pool_s *
 oio_lb_pool__from_storage_policy(struct oio_lb_world_s *lbw,
 		const struct storage_policy_s *stgpol);
 
+static void
+_feed_slot(gpointer key, gpointer value, gpointer u)
+{
+	gchar *slot_name = key;
+	GSList *slot_items = value;
+	struct oio_lb_world_s *lbw = u;
+
+	oio_lb_world__create_slot(lbw, slot_name);
+	oio_lb_world__feed_slot_with_list(lbw, slot_name, slot_items);
+	/* Items may be in several lists. Just clean the list structure,
+	 * and clear the items later. */
+	g_slist_free(slot_items);
+}
+
 void
 oio_lb_world__feed_service_info_list(struct oio_lb_world_s *lbw,
 		GSList *services)
@@ -85,17 +99,7 @@ oio_lb_world__feed_service_info_list(struct oio_lb_world_s *lbw,
 	}
 
 	/* Second pass: feed slots. */
-	void _feed_slot(gpointer key, gpointer value, gpointer udata UNUSED) {
-		gchar *slot_name = key;
-		GSList *slot_items = value;
-
-		oio_lb_world__create_slot(lbw, slot_name);
-		oio_lb_world__feed_slot_with_list(lbw, slot_name, slot_items);
-		/* Items may be in several lists. Just clean the list structure,
-		 * and clear the items later. */
-		g_slist_free(slot_items);
-	}
-	g_hash_table_foreach(slots, _feed_slot, NULL);
+	g_hash_table_foreach(slots, _feed_slot, lbw);
 
 	g_slist_free_full(items, g_free);
 	g_hash_table_destroy(slots);
