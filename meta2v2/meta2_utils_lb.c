@@ -68,6 +68,17 @@ out:
 
 /* ------------------------------------------------------------------------- */
 
+static void
+_spare__on_id(struct oio_lb_selected_item_s *sel, gpointer u)
+{
+	GSList **beans = u;
+	struct bean_CHUNKS_s *chunk = generate_chunk_bean(sel, NULL);
+	struct bean_PROPERTIES_s *prop = generate_chunk_quality_bean(
+			sel, CHUNKS_get_id(chunk)->str, NULL);
+	*beans = g_slist_prepend(*beans, prop);
+	*beans = g_slist_prepend(*beans, chunk);
+}
+
 GError*
 get_spare_chunks_focused(struct oio_lb_s *lb, const char *pool,
 		oio_location_t pin, int mode,
@@ -78,15 +89,7 @@ get_spare_chunks_focused(struct oio_lb_s *lb, const char *pool,
 
 	GRID_TRACE("%s pin=%"G_GINT64_MODIFIER"x mode=%d", __FUNCTION__, pin, mode);
 
-	void _on_id(struct oio_lb_selected_item_s *sel, gpointer u UNUSED)
-	{
-		struct bean_CHUNKS_s *chunk = generate_chunk_bean(sel, NULL);
-		struct bean_PROPERTIES_s *prop = generate_chunk_quality_bean(
-				sel, CHUNKS_get_id(chunk)->str, NULL);
-		beans = g_slist_prepend(beans, prop);
-		beans = g_slist_prepend(beans, chunk);
-	}
-	err = oio_lb__poll_pool_around(lb, pool, pin, mode, _on_id, NULL, NULL);
+	err = oio_lb__poll_pool_around(lb, pool, pin, mode, _spare__on_id, &beans, NULL);
 	if (err) {
 		g_prefix_error(&err,
 				"found only %u services matching the criteria (pool=%s): ",
@@ -132,6 +135,17 @@ convert_chunks_to_locations(struct oio_lb_pool_s *pool, const gchar *ns_name,
 	return (oio_location_t*) g_array_free(result, FALSE);
 }
 
+static void
+_conditioned__on_id(struct oio_lb_selected_item_s *sel, gpointer u)
+{
+	GSList **beans = u;
+	struct bean_CHUNKS_s *chunk = generate_chunk_bean(sel, NULL);
+	struct bean_PROPERTIES_s *prop = generate_chunk_quality_bean(
+			sel, CHUNKS_get_id(chunk)->str, NULL);
+	*beans = g_slist_prepend(*beans, prop);
+	*beans = g_slist_prepend(*beans, chunk);
+}
+
 GError*
 get_conditioned_spare_chunks(struct oio_lb_s *lb, const char *pool,
 		const gchar *ns_name, GSList *already, GSList *broken,
@@ -150,15 +164,7 @@ get_conditioned_spare_chunks(struct oio_lb_s *lb, const char *pool,
 			ns_name, already);
 	g_rw_lock_reader_unlock(&lb->lock);
 
-	void _on_id(struct oio_lb_selected_item_s *sel, gpointer u UNUSED)
-	{
-		struct bean_CHUNKS_s *chunk = generate_chunk_bean(sel, NULL);
-		struct bean_PROPERTIES_s *prop = generate_chunk_quality_bean(
-				sel, CHUNKS_get_id(chunk)->str, NULL);
-		beans = g_slist_prepend(beans, prop);
-		beans = g_slist_prepend(beans, chunk);
-	}
-	err = oio_lb__patch_with_pool(lb, pool, avoid, known, _on_id, NULL, NULL);
+	err = oio_lb__patch_with_pool(lb, pool, avoid, known, _conditioned__on_id, &beans, NULL);
 	guint chunks_count = g_slist_length(beans) / 2;
 	if (err) {
 		g_prefix_error(&err,
@@ -327,6 +333,21 @@ _gen_chunk(struct gen_ctx_s *ctx, struct oio_lb_selected_item_s *sel,
 
 }
 
+struct _generate_ctx_s {
+	struct gen_ctx_s *ctx;
+	guint pos;
+	int i;
+	gboolean subpos;
+};
+
+static void
+_generate__on_id(struct oio_lb_selected_item_s *sel, gpointer u)
+{
+	struct _generate_ctx_s *ctx = u;
+	_gen_chunk(ctx->ctx, sel, ctx->ctx->chunk_size, ctx->pos, ctx->subpos? ctx->i : -1);
+	ctx->i++;
+}
+
 static GError*
 _m2_generate_chunks(struct gen_ctx_s *ctx,
 		gint64 mcs /* actual metachunk size */,
@@ -339,17 +360,14 @@ _m2_generate_chunks(struct gen_ctx_s *ctx,
 	guint pos = 0;
 	gint64 esize = MAX(ctx->size, 1);
 	for (gint64 s = 0; s < esize && !err; s += mcs, ++pos) {
-		int i = 0;
-		void _on_id(struct oio_lb_selected_item_s *sel, gpointer u UNUSED)
-		{
-			_gen_chunk(ctx, sel, ctx->chunk_size, pos, subpos? i : -1);
-			i++;
-		}
 		const char *pool = storage_policy_get_service_pool(ctx->pol);
-		// FIXME(FVE): set last argument
 
+		struct _generate_ctx_s gctx = {
+			.ctx = ctx, .pos = pos, .i = 0, .subpos = subpos,
+		};
+		// FIXME(FVE): set last argument
 		err = oio_lb__poll_pool_around(ctx->lb, pool,
-				ctx->pin, ctx->mode, _on_id, NULL, NULL);
+				ctx->pin, ctx->mode, _generate__on_id, &gctx, NULL);
 
 		if (err != NULL) {
 			g_prefix_error(&err, "at position %u: did not find enough "
